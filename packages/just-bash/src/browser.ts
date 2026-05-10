@@ -46,6 +46,11 @@ export {
   type MountableFsOptions,
   type MountConfig,
 } from "./fs/mountable-fs/index.js";
+export { OpfsFs, type OpfsFsOptions } from "./fs/opfs-fs/index.js";
+export {
+  OpfsOverlayFs,
+  type OpfsOverlayFsOptions,
+} from "./fs/opfs-overlay-fs/index.js";
 export type { NetworkConfig } from "./network/index.js";
 export {
   NetworkAccessDeniedError,
