@@ -25,6 +25,21 @@ open http://localhost:3000/examples/web-fs/
 The page imports `/packages/just-bash/dist/bundle/browser.js`. If you serve
 from a different root, adjust the path in `index.html`.
 
+### Why the importmap
+
+The browser bundle keeps a few npm deps **external** (`diff`, `minimatch`,
+`sprintf-js`, `turndown`) so consumers can pin their own versions, and
+also imports `node:zlib` eagerly. The HTML resolves all of these via a
+`<script type="importmap">` block:
+
+- `diff` / `minimatch` / `sprintf-js` / `turndown` → `https://esm.sh/<pkg>@<version>`
+  pinned to the same versions just-bash depends on.
+- `node:zlib` → [`zlib-stub.js`](./zlib-stub.js), a 12-line stub. The demo
+  doesn't use the gzip / gunzip / zcat commands; if you need them, swap the
+  stub for a real polyfill (e.g. `https://esm.sh/browserify-zlib`).
+
+For production, consider vendoring these locally instead of relying on a CDN.
+
 ## Browser support
 
 | Feature | Chrome / Edge | Safari | Firefox |

@@ -22,6 +22,24 @@
     .muted { color: #888; }
     .pickedDir { font-weight: 600; }
   </style>
+
+  <!--
+    The browser bundle keeps a handful of npm deps external (diff, minimatch,
+    sprintf-js, turndown) and also imports node:zlib eagerly. Resolve them
+    here. ESM CDN URLs use the same major versions just-bash depends on; pin
+    or vendor them locally for production use.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "diff":       "https://esm.sh/diff@8.0.2",
+      "minimatch":  "https://esm.sh/minimatch@10.1.1",
+      "sprintf-js": "https://esm.sh/sprintf-js@1.1.3",
+      "turndown":   "https://esm.sh/turndown@7.2.2",
+      "node:zlib":  "./zlib-stub.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <h1>just-bash · WebFs demo</h1>
