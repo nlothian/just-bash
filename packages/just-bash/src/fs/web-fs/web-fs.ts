@@ -351,6 +351,11 @@ export class WebFs implements IFileSystem {
 
   private async statImpl(path: string, operation: string): Promise<FsStat> {
     validatePath(path, operation);
+    // Mode bits reflect the readOnly grant so bash predicates like
+    // `[[ -w f ]]` and `test -w` see the right state.
+    const fileMode = this.readOnly ? 0o444 : DEFAULT_FILE_MODE;
+    const dirMode = this.readOnly ? 0o555 : DEFAULT_DIR_MODE;
+
     const components = pathComponents(path);
     if (components.length === 0) {
       // Root directory
@@ -358,7 +363,7 @@ export class WebFs implements IFileSystem {
         isFile: false,
         isDirectory: true,
         isSymbolicLink: false,
-        mode: DEFAULT_DIR_MODE,
+        mode: dirMode,
         size: 0,
         mtime: new Date(0),
       };
@@ -377,7 +382,7 @@ export class WebFs implements IFileSystem {
         isFile: true,
         isDirectory: false,
         isSymbolicLink: false,
-        mode: DEFAULT_FILE_MODE,
+        mode: fileMode,
         size: file.size,
         mtime: new Date(file.lastModified),
       };
@@ -389,7 +394,7 @@ export class WebFs implements IFileSystem {
           isFile: false,
           isDirectory: true,
           isSymbolicLink: false,
-          mode: DEFAULT_DIR_MODE,
+          mode: dirMode,
           size: 0,
           mtime: new Date(0),
         };

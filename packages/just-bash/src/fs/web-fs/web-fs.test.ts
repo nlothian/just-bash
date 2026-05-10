@@ -305,6 +305,29 @@ describe("WebFs", () => {
         ro.utimes("/seed.txt", new Date(), new Date()),
       ).rejects.toThrow("EROFS");
     });
+
+    it("stat reports masked mode (0o444 file, 0o555 dir)", async () => {
+      expect((await ro.stat("/seed.txt")).mode).toBe(0o444);
+      expect((await ro.stat("/dir")).mode).toBe(0o555);
+      expect((await ro.stat("/")).mode).toBe(0o555);
+    });
+
+    it("lstat reports masked mode (no symlinks: same as stat)", async () => {
+      expect((await ro.lstat("/seed.txt")).mode).toBe(0o444);
+      expect((await ro.lstat("/dir")).mode).toBe(0o555);
+    });
+  });
+
+  describe("default (writable) mode reports unmasked stat mode", () => {
+    it("file mode is 0o644 and dir mode is 0o755", async () => {
+      const root = createMockWebFsRoot();
+      const writable = new WebFs({ root });
+      await writable.writeFile("/f.txt", "x");
+      await writable.mkdir("/d");
+      expect((await writable.stat("/f.txt")).mode).toBe(0o644);
+      expect((await writable.stat("/d")).mode).toBe(0o755);
+      expect((await writable.stat("/")).mode).toBe(0o755);
+    });
   });
 
   describe("realpath", () => {

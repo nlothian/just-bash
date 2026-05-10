@@ -388,6 +388,14 @@ export class WebOverlayFs implements IFileSystem {
       );
     }
 
+    // Mode bits reflect the readOnly grant. Memory entries store their own
+    // mode, so we mask with `& 0o555` to strip write bits while preserving
+    // anything the caller set (e.g. via mkdir defaults). For handle-backed
+    // entries we synthesize a mode from the defaults.
+    const fileMode = this.readOnly ? 0o444 : DEFAULT_FILE_MODE;
+    const dirMode = this.readOnly ? 0o555 : DEFAULT_DIR_MODE;
+    const maskMemMode = (mode: number) => (this.readOnly ? mode & 0o555 : mode);
+
     const memEntry = this.memory.get(normalized);
     if (memEntry) {
       const isFile = memEntry.type === "file";
@@ -395,7 +403,7 @@ export class WebOverlayFs implements IFileSystem {
         isFile,
         isDirectory: !isFile,
         isSymbolicLink: false,
-        mode: memEntry.mode,
+        mode: maskMemMode(memEntry.mode),
         size: isFile ? (memEntry as MemoryFileEntry).content.length : 0,
         mtime: memEntry.mtime,
       };
@@ -413,7 +421,7 @@ export class WebOverlayFs implements IFileSystem {
         isFile: true,
         isDirectory: false,
         isSymbolicLink: false,
-        mode: DEFAULT_FILE_MODE,
+        mode: fileMode,
         size: file.size,
         mtime: new Date(file.lastModified),
       };
@@ -422,7 +430,7 @@ export class WebOverlayFs implements IFileSystem {
       isFile: false,
       isDirectory: true,
       isSymbolicLink: false,
-      mode: DEFAULT_DIR_MODE,
+      mode: dirMode,
       size: 0,
       mtime: new Date(0),
     };

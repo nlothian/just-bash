@@ -191,6 +191,46 @@ describe("WebOverlayFs", () => {
       // Reads still work
       expect(await fs.readFile("/x")).toBe("y");
     });
+
+    it("stat reports masked mode for handle-backed entries", async () => {
+      const fs = await seededOverlay({
+        mountPoint: "/",
+        readOnly: true,
+        seed: { "/file.txt": "y", "/dir/inner.txt": "z" },
+      });
+      expect((await fs.stat("/file.txt")).mode).toBe(0o444);
+      expect((await fs.stat("/dir")).mode).toBe(0o555);
+    });
+
+    it("stat reports masked mode for memory-layer entries", async () => {
+      // Seed via writable, mutate the memory layer in another writable
+      // instance, then mount read-only sharing the same handle. The memory
+      // mutations don't survive across instances, so we need a different
+      // approach: use one read-only instance and inspect memory entries
+      // populated by ensureParentDirsInMemory during construction.
+      const fs = await seededOverlay({
+        mountPoint: "/home/user/project",
+        readOnly: true,
+      });
+      // The mount-point directory chain entries are in the memory layer.
+      expect((await fs.stat("/home")).mode).toBe(0o555);
+      expect((await fs.stat("/home/user")).mode).toBe(0o555);
+      expect((await fs.stat("/home/user/project")).mode).toBe(0o555);
+    });
+  });
+
+  describe("default (writable) mode reports unmasked stat mode", () => {
+    it("file mode is 0o644 and dir mode is 0o755", async () => {
+      const fs = await seededOverlay({
+        mountPoint: "/",
+        seed: { "/file.txt": "y" },
+      });
+      await fs.mkdir("/mem-dir");
+      await fs.writeFile("/mem-file.txt", "z");
+      expect((await fs.stat("/file.txt")).mode).toBe(0o644); // handle-backed
+      expect((await fs.stat("/mem-file.txt")).mode).toBe(0o644); // memory
+      expect((await fs.stat("/mem-dir")).mode).toBe(0o755); // memory dir
+    });
   });
 
   describe("operations unsupported by the handle API", () => {
