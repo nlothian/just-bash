@@ -1,20 +1,27 @@
 /**
- * OpfsOverlayFs - Copy-on-write filesystem backed by an OPFS directory.
+ * WebOverlayFs - Copy-on-write filesystem backed by a Web Platform File
+ * System Access handle.
  *
- * Reads come from OPFS (the browser's Origin Private File System), writes go
- * to an in-memory layer. Changes don't persist to OPFS and can't escape the
- * configured root handle. Tombstones track files removed from the OPFS view
- * so they appear deleted to the consumer even though OPFS still holds them.
+ * Reads fall through to the underlying handle (OPFS, a user-picked directory,
+ * etc.); writes go to an in-memory layer. Changes don't persist to the
+ * backing handle and can't escape it. Tombstones track entries removed from
+ * the overlay so they appear deleted even though the handle still holds them.
  *
- * OPFS has no symlinks, no permissions model, and no stable rename across
- * directories — see OpfsFs for the full set of consequences. In particular:
+ * The handle API has no symlinks, no POSIX permissions model, and no stable
+ * cross-directory rename — see WebFs for the full set of consequences. In
+ * particular:
  *
  *   - `symlink`/`link`/`readlink`        → throw EPERM / EINVAL
  *   - `chmod`/`utimes`                   → silently no-op
  *   - `mv`                               → cp + rm
  *   - `realpath`                         → returns the normalized virtual path
  *   - `getAllPaths`                      → returns memory + tombstone-aware
- *                                          snapshot only (sync; OPFS is async)
+ *                                          snapshot only (sync; the handle API
+ *                                          enumerates async)
+ *
+ * Permission management is the caller's responsibility — this class never
+ * calls `requestPermission()` or `queryPermission()`. Pass `readOnly: true`
+ * when the caller's grant is "read".
  */
 
 import {
@@ -58,16 +65,17 @@ interface MemoryDirEntry {
 
 type MemoryEntry = MemoryFileEntry | MemoryDirEntry;
 
-export interface OpfsOverlayFsOptions {
+export interface WebOverlayFsOptions {
   /**
-   * The root OPFS directory handle. Reads fall through to here when not
-   * present in the in-memory write layer. Typically obtained via
-   * `await navigator.storage.getDirectory()` or a sub-handle.
+   * The root directory handle. Reads fall through to here when not present
+   * in the in-memory write layer. Typically obtained via
+   * `await navigator.storage.getDirectory()` (OPFS), a sub-handle, or a
+   * user-picked directory from `showDirectoryPicker()`.
    */
   root: FileSystemDirectoryHandle;
 
   /**
-   * The virtual mount point where the OPFS root appears.
+   * The virtual mount point where the backing handle appears.
    * Defaults to "/home/user/project". Accepts "/" to mount at the virtual root.
    */
   mountPoint?: string;
@@ -78,7 +86,7 @@ export interface OpfsOverlayFsOptions {
   readOnly?: boolean;
 
   /**
-   * Maximum file size in bytes that can be read from OPFS.
+   * Maximum file size in bytes that can be read from the backing handle.
    * Files larger than this throw EFBIG. Defaults to 10MB.
    */
   maxFileReadSize?: number;
@@ -90,7 +98,7 @@ function isTypeMismatch(e: unknown): boolean {
   return e instanceof Error && e.name === "TypeMismatchError";
 }
 
-export class OpfsOverlayFs implements IFileSystem {
+export class WebOverlayFs implements IFileSystem {
   private readonly root: FileSystemDirectoryHandle;
   private readonly mountPoint: string;
   private readonly readOnly: boolean;
@@ -98,7 +106,7 @@ export class OpfsOverlayFs implements IFileSystem {
   private readonly memory: Map<string, MemoryEntry> = new Map();
   private readonly deleted: Set<string> = new Set();
 
-  constructor(options: OpfsOverlayFsOptions) {
+  constructor(options: WebOverlayFsOptions) {
     this.root = options.root;
 
     const mp = options.mountPoint ?? DEFAULT_MOUNT_POINT;
@@ -147,13 +155,13 @@ export class OpfsOverlayFs implements IFileSystem {
   }
 
   /**
-   * Map a virtual path to its position relative to the OPFS mount point.
-   * Returns null if the path is not under the mount point (so OPFS lookups
+   * Map a virtual path to its position relative to the mount point.
+   * Returns null if the path is not under the mount point (so handle lookups
    * are skipped — only the memory layer is consulted).
    *
    * "/" — when mountPoint = "/" — returns an empty component array (root).
    */
-  private toOpfsComponents(virtualPath: string): string[] | null {
+  private toHandleComponents(virtualPath: string): string[] | null {
     const normalized = normalizePath(virtualPath);
     let relative: string;
     if (this.mountPoint === "/") {
@@ -169,7 +177,7 @@ export class OpfsOverlayFs implements IFileSystem {
     return relative.slice(1).split("/");
   }
 
-  private async walkOpfsDir(
+  private async walkHandleDir(
     components: string[],
   ): Promise<FileSystemDirectoryHandle | null> {
     let dir: FileSystemDirectoryHandle = this.root;
@@ -184,17 +192,18 @@ export class OpfsOverlayFs implements IFileSystem {
   }
 
   /**
-   * Look up a path in OPFS. Returns the handle (file or dir) or null if
-   * absent or unreachable. Does NOT consult the memory layer or tombstones.
+   * Look up a path in the backing handle. Returns the handle (file or dir)
+   * or null if absent or unreachable. Does NOT consult the memory layer or
+   * tombstones.
    */
-  private async lookupOpfs(
+  private async lookupHandle(
     virtualPath: string,
   ): Promise<FileSystemHandle | null> {
-    const components = this.toOpfsComponents(virtualPath);
+    const components = this.toHandleComponents(virtualPath);
     if (components === null) return null;
     if (components.length === 0) return this.root;
 
-    const parent = await this.walkOpfsDir(components.slice(0, -1));
+    const parent = await this.walkHandleDir(components.slice(0, -1));
     if (parent === null) return null;
     const leaf = components[components.length - 1]!;
 
@@ -250,7 +259,7 @@ export class OpfsOverlayFs implements IFileSystem {
     const normalized = normalizePath(virtualPath);
     if (this.isShadowedByDeleted(normalized)) return false;
     if (this.memory.has(normalized)) return true;
-    const handle = await this.lookupOpfs(normalized);
+    const handle = await this.lookupHandle(normalized);
     return handle !== null;
   }
 
@@ -281,7 +290,7 @@ export class OpfsOverlayFs implements IFileSystem {
       return memEntry.content;
     }
 
-    const handle = await this.lookupOpfs(normalized);
+    const handle = await this.lookupHandle(normalized);
     if (handle === null) {
       throw new Error(`ENOENT: no such file or directory, open '${path}'`);
     }
@@ -392,7 +401,7 @@ export class OpfsOverlayFs implements IFileSystem {
       };
     }
 
-    const handle = await this.lookupOpfs(normalized);
+    const handle = await this.lookupHandle(normalized);
     if (handle === null) {
       throw new Error(
         `ENOENT: no such file or directory, ${operation} '${path}'`,
@@ -500,13 +509,13 @@ export class OpfsOverlayFs implements IFileSystem {
       });
     }
 
-    // OPFS entries — only when the path is under the mount point
-    let foundOnOpfs = false;
-    const components = this.toOpfsComponents(normalized);
+    // Backing-handle entries — only when the path is under the mount point
+    let foundOnHandle = false;
+    const components = this.toHandleComponents(normalized);
     if (components !== null) {
-      const dir = await this.walkOpfsDir(components);
+      const dir = await this.walkHandleDir(components);
       if (dir !== null) {
-        foundOnOpfs = true;
+        foundOnHandle = true;
         const iter = (
           dir as FileSystemDirectoryHandle & {
             entries: () => AsyncIterableIterator<[string, FileSystemHandle]>;
@@ -525,7 +534,7 @@ export class OpfsOverlayFs implements IFileSystem {
       }
     }
 
-    if (!foundOnOpfs && !memEntry) {
+    if (!foundOnHandle && !memEntry) {
       throw new Error(`ENOENT: no such file or directory, scandir '${path}'`);
     }
 
@@ -560,15 +569,16 @@ export class OpfsOverlayFs implements IFileSystem {
 
     this.memory.delete(normalized);
 
-    // Tombstone only when an OPFS path needs hiding. Memory-only files don't
-    // need a tombstone (prevents unbounded growth of the deleted set).
-    if (await this.existsOnOpfs(normalized)) {
+    // Tombstone only when a backing-handle path needs hiding. Memory-only
+    // files don't need a tombstone (prevents unbounded growth of the deleted
+    // set).
+    if (await this.existsOnHandle(normalized)) {
       this.deleted.add(normalized);
     }
   }
 
-  private async existsOnOpfs(virtualPath: string): Promise<boolean> {
-    const handle = await this.lookupOpfs(virtualPath);
+  private async existsOnHandle(virtualPath: string): Promise<boolean> {
+    const handle = await this.lookupHandle(virtualPath);
     return handle !== null;
   }
 
@@ -614,8 +624,8 @@ export class OpfsOverlayFs implements IFileSystem {
   }
 
   getAllPaths(): string[] {
-    // Sync return type forces us to ignore OPFS contents (async to enumerate).
-    // Glob fallback uses readdir() walks, which do see OPFS.
+    // Sync return type forces us to ignore backing-handle contents (async to
+    // enumerate). Glob fallback uses readdir() walks, which do see them.
     const paths = new Set<string>(this.memory.keys());
     for (const deleted of this.deleted) paths.delete(deleted);
     return Array.from(paths);

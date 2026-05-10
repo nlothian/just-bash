@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { OpfsFs } from "./opfs-fs.js";
-import { createMockOpfsRoot } from "./opfs-mock.js";
+import { WebFs } from "./web-fs.js";
+import { createMockWebFsRoot } from "./web-fs-mock.js";
 
-describe("OpfsFs", () => {
-  let fs: OpfsFs;
+describe("WebFs", () => {
+  let fs: WebFs;
 
   beforeEach(() => {
-    fs = new OpfsFs({ root: createMockOpfsRoot() });
+    fs = new WebFs({ root: createMockWebFsRoot() });
   });
 
   describe("writeFile / readFile", () => {
@@ -45,8 +45,8 @@ describe("OpfsFs", () => {
     });
 
     it("enforces maxFileReadSize", async () => {
-      const small = new OpfsFs({
-        root: createMockOpfsRoot(),
+      const small = new WebFs({
+        root: createMockWebFsRoot(),
         maxFileReadSize: 4,
       });
       await small.writeFile("/big.txt", "abcdef");
@@ -89,7 +89,7 @@ describe("OpfsFs", () => {
       expect(dstat.isFile).toBe(false);
     });
 
-    it("lstat behaves identically to stat (no symlinks in OPFS)", async () => {
+    it("lstat behaves identically to stat (no symlinks in the API)", async () => {
       await fs.writeFile("/f.txt", "abc");
       const a = await fs.stat("/f.txt");
       const b = await fs.lstat("/f.txt");
@@ -225,7 +225,7 @@ describe("OpfsFs", () => {
     });
   });
 
-  describe("OPFS-unsupported operations", () => {
+  describe("operations unsupported by the handle API", () => {
     it("symlink throws EPERM", async () => {
       await expect(fs.symlink("/a", "/b")).rejects.toThrow("EPERM");
     });

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createMockOpfsRoot } from "../opfs-fs/opfs-mock.js";
-import { OpfsFs } from "../opfs-fs/opfs-fs.js";
-import { OpfsOverlayFs } from "./opfs-overlay-fs.js";
+import { createMockWebFsRoot } from "../web-fs/web-fs-mock.js";
+import { WebFs } from "../web-fs/web-fs.js";
+import { WebOverlayFs } from "./web-overlay-fs.js";
 
 /**
- * Seed the OPFS mock by writing through OpfsFs first, then mount that same
- * OPFS root under OpfsOverlayFs. This gives us a realistic shared backing
- * store without needing a real browser.
+ * Seed the mock handle by writing through WebFs first, then mount that same
+ * root under WebOverlayFs. This gives us a realistic shared backing store
+ * without needing a real browser.
  */
 async function seededOverlay({
   seed,
@@ -16,23 +16,23 @@ async function seededOverlay({
   seed?: Record<string, string>;
   mountPoint?: string;
   readOnly?: boolean;
-} = {}): Promise<OpfsOverlayFs> {
-  const root = createMockOpfsRoot();
+} = {}): Promise<WebOverlayFs> {
+  const root = createMockWebFsRoot();
   if (seed) {
-    const seeder = new OpfsFs({ root });
+    const seeder = new WebFs({ root });
     for (const [path, content] of Object.entries(seed)) {
       await seeder.writeFile(path, content);
     }
   }
-  return new OpfsOverlayFs({ root, mountPoint, readOnly });
+  return new WebOverlayFs({ root, mountPoint, readOnly });
 }
 
-describe("OpfsOverlayFs", () => {
+describe("WebOverlayFs", () => {
   describe("default mount point /home/user/project", () => {
-    let fs: OpfsOverlayFs;
+    let fs: WebOverlayFs;
 
     beforeEach(async () => {
-      fs = await seededOverlay({ seed: { "/file.txt": "from opfs" } });
+      fs = await seededOverlay({ seed: { "/file.txt": "from handle" } });
     });
 
     it("creates the mount-point directory chain", async () => {
@@ -41,12 +41,12 @@ describe("OpfsOverlayFs", () => {
       expect((await fs.stat("/home/user/project")).isDirectory).toBe(true);
     });
 
-    it("reads OPFS files at the mounted path", async () => {
-      expect(await fs.readFile("/home/user/project/file.txt")).toBe("from opfs");
+    it("reads handle-backed files at the mounted path", async () => {
+      expect(await fs.readFile("/home/user/project/file.txt")).toBe("from handle");
     });
 
-    it("paths outside the mount point have no OPFS content", async () => {
-      // /file.txt was written to OPFS root, but with mount=/home/user/project
+    it("paths outside the mount point have no handle content", async () => {
+      // /file.txt was written to the handle root, but with mount=/home/user/project
       // we expose it at /home/user/project/file.txt. /file.txt should not exist.
       await expect(fs.readFile("/file.txt")).rejects.toThrow("ENOENT");
     });
@@ -57,7 +57,7 @@ describe("OpfsOverlayFs", () => {
   });
 
   describe("mountPoint: /", () => {
-    let fs: OpfsOverlayFs;
+    let fs: WebOverlayFs;
 
     beforeEach(async () => {
       fs = await seededOverlay({
@@ -69,29 +69,29 @@ describe("OpfsOverlayFs", () => {
       });
     });
 
-    it("reads OPFS files at the virtual root", async () => {
+    it("reads handle-backed files at the virtual root", async () => {
       expect(await fs.readFile("/a.txt")).toBe("alpha");
       expect(await fs.readFile("/sub/b.txt")).toBe("beta");
     });
 
-    it("writes go to memory, OPFS unchanged", async () => {
+    it("writes go to memory, backing handle unchanged", async () => {
       await fs.writeFile("/a.txt", "modified");
       expect(await fs.readFile("/a.txt")).toBe("modified");
 
-      // Re-mount fresh and confirm OPFS still has original content
-      const fresh = new OpfsOverlayFs({
+      // Re-mount fresh and confirm the backing handle still has original content
+      const fresh = new WebOverlayFs({
         root: (fs as unknown as { root: FileSystemDirectoryHandle }).root,
         mountPoint: "/",
       });
       expect(await fresh.readFile("/a.txt")).toBe("alpha");
     });
 
-    it("writes new files that aren't on OPFS", async () => {
+    it("writes new files that aren't on the backing handle", async () => {
       await fs.writeFile("/new.txt", "fresh");
       expect(await fs.readFile("/new.txt")).toBe("fresh");
     });
 
-    it("rm hides an OPFS file via tombstone", async () => {
+    it("rm hides a handle-backed file via tombstone", async () => {
       await fs.rm("/a.txt");
       await expect(fs.readFile("/a.txt")).rejects.toThrow("ENOENT");
       expect(await fs.exists("/a.txt")).toBe(false);
@@ -103,7 +103,7 @@ describe("OpfsOverlayFs", () => {
       expect(await fs.readFile("/a.txt")).toBe("rewritten");
     });
 
-    it("readdir merges memory and OPFS, applying tombstones", async () => {
+    it("readdir merges memory and handle entries, applying tombstones", async () => {
       await fs.writeFile("/c.txt", "gamma");
       await fs.rm("/sub/b.txt");
       const entries = await fs.readdir("/");
@@ -115,24 +115,24 @@ describe("OpfsOverlayFs", () => {
       expect(subEntries).not.toContain("b.txt");
     });
 
-    it("recursive rm tombstones a whole OPFS subtree", async () => {
+    it("recursive rm tombstones a whole handle subtree", async () => {
       await fs.rm("/sub", { recursive: true });
       await expect(fs.readFile("/sub/b.txt")).rejects.toThrow("ENOENT");
       await expect(fs.readdir("/sub")).rejects.toThrow("ENOENT");
     });
 
-    it("cp from OPFS source to new dest writes to memory", async () => {
+    it("cp from handle source to new dest writes to memory", async () => {
       await fs.cp("/a.txt", "/copy.txt");
       expect(await fs.readFile("/copy.txt")).toBe("alpha");
-      // OPFS unchanged
-      const fresh = new OpfsOverlayFs({
+      // backing handle unchanged
+      const fresh = new WebOverlayFs({
         root: (fs as unknown as { root: FileSystemDirectoryHandle }).root,
         mountPoint: "/",
       });
       await expect(fresh.readFile("/copy.txt")).rejects.toThrow("ENOENT");
     });
 
-    it("recursive cp copies an OPFS dir into memory", async () => {
+    it("recursive cp copies a handle dir into memory", async () => {
       await fs.cp("/sub", "/sub-copy", { recursive: true });
       expect(await fs.readFile("/sub-copy/b.txt")).toBe("beta");
     });
@@ -151,18 +151,18 @@ describe("OpfsOverlayFs", () => {
       await expect(fs.rm("/sub")).rejects.toThrow("ENOTEMPTY");
     });
 
-    it("appendFile concatenates onto OPFS-backed content", async () => {
+    it("appendFile concatenates onto handle-backed content", async () => {
       await fs.appendFile("/a.txt", "+suffix");
       expect(await fs.readFile("/a.txt")).toBe("alpha+suffix");
     });
 
-    it("stat distinguishes OPFS files and memory dirs", async () => {
+    it("stat distinguishes handle files and memory dirs", async () => {
       await fs.mkdir("/mem-dir");
       expect((await fs.stat("/mem-dir")).isDirectory).toBe(true);
       expect((await fs.stat("/a.txt")).isFile).toBe(true);
     });
 
-    it("mkdir EEXIST on existing OPFS directory", async () => {
+    it("mkdir EEXIST on existing handle directory", async () => {
       await expect(fs.mkdir("/sub")).rejects.toThrow("EEXIST");
     });
 
@@ -193,8 +193,8 @@ describe("OpfsOverlayFs", () => {
     });
   });
 
-  describe("OPFS-unsupported ops", () => {
-    let fs: OpfsOverlayFs;
+  describe("operations unsupported by the handle API", () => {
+    let fs: WebOverlayFs;
     beforeEach(async () => {
       fs = await seededOverlay({ mountPoint: "/" });
     });
@@ -242,13 +242,13 @@ describe("OpfsOverlayFs", () => {
     it("getAllPaths returns memory entries minus tombstones", async () => {
       const fs = await seededOverlay({
         mountPoint: "/",
-        seed: { "/opfs.txt": "x" },
+        seed: { "/seed.txt": "x" },
       });
       await fs.writeFile("/mem.txt", "y");
-      await fs.rm("/opfs.txt");
+      await fs.rm("/seed.txt");
       const all = fs.getAllPaths();
       expect(all).toContain("/mem.txt");
-      expect(all).not.toContain("/opfs.txt");
+      expect(all).not.toContain("/seed.txt");
     });
   });
 });

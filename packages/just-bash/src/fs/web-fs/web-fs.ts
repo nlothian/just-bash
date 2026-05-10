@@ -1,21 +1,29 @@
 /**
- * OpfsFs - Direct wrapper around the browser Origin Private File System (OPFS).
+ * WebFs - Direct wrapper around a Web Platform File System Access handle.
  *
- * All operations go directly to the underlying OPFS handles. Paths are
- * relative to the configured root `FileSystemDirectoryHandle`.
+ * Works with any `FileSystemDirectoryHandle` — the Origin Private File System
+ * (`navigator.storage.getDirectory()`), a user-picked directory from
+ * `showDirectoryPicker()`, drag-dropped folders, PWA `file_handlers`, etc.
+ * Paths are relative to the configured root handle.
  *
- * OPFS has no symlinks, no permissions model, and no stable rename across
- * directories. This implementation reflects those constraints:
+ * The File System Access API has no symlinks, no POSIX permissions model,
+ * and no stable cross-directory rename. This implementation reflects those
+ * constraints:
  *
  *   - `symlink`/`link`/`readlink`        → throw EPERM (operation not permitted)
  *   - `chmod`/`utimes`                   → silently no-op (no metadata storage)
  *   - `mv`                               → implemented via cp + rm
  *   - `realpath`                         → returns the normalized virtual path
- *   - `getAllPaths`                      → returns [] (sync method, OPFS is async)
+ *   - `getAllPaths`                      → returns [] (sync method, the API is async)
  *
  * Designed for browser bundles. No node:fs / node:path imports; the only
- * platform dependency is the WICG File System Access API (`FileSystemDirectoryHandle`,
- * `FileSystemFileHandle`) which is exposed via `lib.dom`.
+ * platform dependency is the WICG File System Access API
+ * (`FileSystemDirectoryHandle`, `FileSystemFileHandle`) exposed via `lib.dom`.
+ *
+ * Permission management is the caller's responsibility — this class never
+ * calls `requestPermission()` or `queryPermission()`. Pass `readOnly: true`
+ * when the caller's grant is "read" so writes fail with EROFS rather than
+ * surfacing the underlying `NotAllowedError`.
  */
 
 import {
@@ -43,10 +51,11 @@ import {
   validatePath,
 } from "../path-utils.js";
 
-export interface OpfsFsOptions {
+export interface WebFsOptions {
   /**
-   * The root OPFS directory handle. Typically obtained via
-   * `await navigator.storage.getDirectory()`, or a sub-handle for sandboxing.
+   * The root directory handle. Typically obtained via
+   * `await navigator.storage.getDirectory()` (OPFS), or a sub-handle for
+   * sandboxing, or a user-picked handle from `showDirectoryPicker()`.
    */
   root: FileSystemDirectoryHandle;
 
@@ -70,8 +79,8 @@ function pathComponents(virtualPath: string): string[] {
 }
 
 /**
- * Convert a Uint8Array to a plain ArrayBuffer for use with OPFS writable
- * streams. The lib.dom `FileSystemWriteChunkType` requires `ArrayBuffer`-backed
+ * Convert a Uint8Array to a plain ArrayBuffer for use with writable streams.
+ * The lib.dom `FileSystemWriteChunkType` requires `ArrayBuffer`-backed
  * views; a Uint8Array typed as `ArrayBufferLike` (which includes
  * `SharedArrayBuffer`) is rejected by strict TS even though it's valid at
  * runtime. This helper produces a copy when necessary.
@@ -108,11 +117,11 @@ function isTypeMismatch(e: unknown): boolean {
   return errCode(e) === "TypeMismatchError";
 }
 
-export class OpfsFs implements IFileSystem {
+export class WebFs implements IFileSystem {
   private readonly root: FileSystemDirectoryHandle;
   private readonly maxFileReadSize: number;
 
-  constructor(options: OpfsFsOptions) {
+  constructor(options: WebFsOptions) {
     this.root = options.root;
     this.maxFileReadSize = options.maxFileReadSize ?? 10485760;
   }
@@ -314,7 +323,7 @@ export class OpfsFs implements IFileSystem {
   }
 
   async lstat(path: string): Promise<FsStat> {
-    // OPFS has no symlinks, so lstat behaves identically to stat.
+    // No symlinks in this API, so lstat behaves identically to stat.
     return this.statImpl(path, "lstat");
   }
 
@@ -501,7 +510,7 @@ export class OpfsFs implements IFileSystem {
         if (force) return;
         throw new Error(`ENOENT: no such file or directory, rm '${path}'`);
       }
-      // OPFS throws InvalidModificationError when removing a non-empty
+      // The API throws InvalidModificationError when removing a non-empty
       // directory without recursive: true.
       if (errCode(e) === "InvalidModificationError") {
         throw new Error(`ENOTEMPTY: directory not empty, rm '${path}'`);
@@ -545,9 +554,9 @@ export class OpfsFs implements IFileSystem {
   async mv(src: string, dest: string): Promise<void> {
     validatePath(src, "mv");
     validatePath(dest, "mv");
-    // OPFS has no native cross-directory rename in the stable spec.
-    // Implement as cp + rm. (The newer FileSystemHandle.move() exists in
-    // some browsers but is not yet standardized.)
+    // The stable spec has no native cross-directory rename. Implement as
+    // cp + rm. (The newer FileSystemHandle.move() exists in some browsers
+    // but is not yet standardized.)
     const srcStat = await this.stat(src).catch((e) => {
       if ((e as Error).message?.startsWith("ENOENT")) {
         throw new Error(`ENOENT: no such file or directory, mv '${src}'`);
@@ -563,20 +572,20 @@ export class OpfsFs implements IFileSystem {
   }
 
   getAllPaths(): string[] {
-    // OPFS enumeration is async; the IFileSystem interface returns sync.
-    // Glob fall-back code paths perform recursive readdir() walks and do
-    // not depend on this method.
+    // The handle API enumerates asynchronously; the IFileSystem interface
+    // returns sync. Glob fall-back code paths perform recursive readdir()
+    // walks and do not depend on this method.
     return [];
   }
 
   async chmod(_path: string, _mode: number): Promise<void> {
-    // OPFS has no permissions model. Silently no-op so scripts that call
+    // No POSIX permissions model. Silently no-op so scripts that call
     // chmod (e.g. `chmod +x`) don't fail.
     return;
   }
 
   async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
-    // OPFS does not expose a way to update mtime/atime. No-op.
+    // The handle API doesn't expose a way to update mtime/atime. No-op.
     return;
   }
 
@@ -589,13 +598,14 @@ export class OpfsFs implements IFileSystem {
   }
 
   async readlink(path: string): Promise<string> {
-    // No symlinks in OPFS. POSIX readlink() on a non-symlink returns EINVAL.
+    // No symlinks in the handle API. POSIX readlink() on a non-symlink
+    // returns EINVAL.
     throw new Error(`EINVAL: invalid argument, readlink '${path}'`);
   }
 
   async realpath(path: string): Promise<string> {
-    // OPFS has no symlinks; realpath is just normalization. We still verify
-    // the path exists, matching POSIX realpath() semantics.
+    // No symlinks; realpath is just normalization. We still verify the path
+    // exists, matching POSIX realpath() semantics.
     validatePath(path, "realpath");
     const exists = await this.exists(path);
     if (!exists) {

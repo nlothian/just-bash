@@ -2,8 +2,8 @@
  * In-memory mock of the WICG File System Access API for tests.
  *
  * Implements just enough of `FileSystemDirectoryHandle` /
- * `FileSystemFileHandle` to exercise OpfsFs without a real browser.
- * Errors thrown match the real OPFS semantics: DOMException-like objects
+ * `FileSystemFileHandle` to exercise WebFs without a real browser.
+ * Errors thrown match the real spec semantics: DOMException-like objects
  * with `name` set to "NotFoundError" / "TypeMismatchError" /
  * "InvalidModificationError".
  */
@@ -92,7 +92,7 @@ class MockFileHandle {
   }
 
   async createWritable(): Promise<MockWritable> {
-    // Real OPFS createWritable() truncates by default — match that.
+    // The real createWritable() truncates by default — match that.
     this.node.data = new Uint8Array(0);
     return new MockWritable(this.node);
   }
@@ -186,10 +186,10 @@ class MockDirHandle {
 }
 
 /**
- * Create an empty in-memory OPFS root handle. Cast to `FileSystemDirectoryHandle`
- * for use as `OpfsFsOptions.root` — the mock implements the surface OpfsFs uses.
+ * Create an empty in-memory root handle. Cast to `FileSystemDirectoryHandle`
+ * for use as `WebFsOptions.root` — the mock implements the surface WebFs uses.
  */
-export function createMockOpfsRoot(): FileSystemDirectoryHandle {
+export function createMockWebFsRoot(): FileSystemDirectoryHandle {
   const root: DirNode = { kind: "directory", children: new Map() };
   return new MockDirHandle("", root) as unknown as FileSystemDirectoryHandle;
 }
