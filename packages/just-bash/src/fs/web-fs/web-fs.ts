@@ -65,6 +65,18 @@ export interface WebFsOptions {
    * Defaults to 10MB (10485760).
    */
   maxFileReadSize?: number;
+
+  /**
+   * If true, every state-changing operation (writeFile, appendFile, mkdir,
+   * rm, cp, mv, chmod, utimes) throws EROFS. Set this when the underlying
+   * permission grant is "read" so callers see a consistent POSIX-style
+   * error rather than a `NotAllowedError` from the handle API. Permission
+   * management itself is the caller's responsibility — this class never
+   * calls `requestPermission()` or `queryPermission()`.
+   *
+   * Defaults to false.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -120,10 +132,18 @@ function isTypeMismatch(e: unknown): boolean {
 export class WebFs implements IFileSystem {
   private readonly root: FileSystemDirectoryHandle;
   private readonly maxFileReadSize: number;
+  private readonly readOnly: boolean;
 
   constructor(options: WebFsOptions) {
     this.root = options.root;
     this.maxFileReadSize = options.maxFileReadSize ?? 10485760;
+    this.readOnly = options.readOnly ?? false;
+  }
+
+  private assertWritable(operation: string): void {
+    if (this.readOnly) {
+      throw new Error(`EROFS: read-only file system, ${operation}`);
+    }
   }
 
   /**
@@ -239,6 +259,7 @@ export class WebFs implements IFileSystem {
     options?: WriteFileOptions | BufferEncoding,
   ): Promise<void> {
     validatePath(path, "write");
+    this.assertWritable(`write '${path}'`);
     const encoding = getEncoding(options);
     const buffer = toBuffer(content, encoding);
 
@@ -273,6 +294,7 @@ export class WebFs implements IFileSystem {
     options?: WriteFileOptions | BufferEncoding,
   ): Promise<void> {
     validatePath(path, "append");
+    this.assertWritable(`append '${path}'`);
     const encoding = getEncoding(options);
     const tail = toBuffer(content, encoding);
 
@@ -383,6 +405,7 @@ export class WebFs implements IFileSystem {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     validatePath(path, "mkdir");
+    this.assertWritable(`mkdir '${path}'`);
     const components = pathComponents(path);
     if (components.length === 0) {
       // mkdir on / is a no-op when recursive, EEXIST otherwise
@@ -480,6 +503,7 @@ export class WebFs implements IFileSystem {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     validatePath(path, "rm");
+    this.assertWritable(`rm '${path}'`);
     const components = pathComponents(path);
     if (components.length === 0) {
       throw new Error(`EBUSY: resource busy or locked, rm '${path}'`);
@@ -522,6 +546,7 @@ export class WebFs implements IFileSystem {
   async cp(src: string, dest: string, options?: CpOptions): Promise<void> {
     validatePath(src, "cp");
     validatePath(dest, "cp");
+    this.assertWritable(`cp '${dest}'`);
 
     const recursive = options?.recursive ?? false;
     const srcStat = await this.stat(src);
@@ -554,6 +579,7 @@ export class WebFs implements IFileSystem {
   async mv(src: string, dest: string): Promise<void> {
     validatePath(src, "mv");
     validatePath(dest, "mv");
+    this.assertWritable(`mv '${dest}'`);
     // The stable spec has no native cross-directory rename. Implement as
     // cp + rm. (The newer FileSystemHandle.move() exists in some browsers
     // but is not yet standardized.)
@@ -578,14 +604,17 @@ export class WebFs implements IFileSystem {
     return [];
   }
 
-  async chmod(_path: string, _mode: number): Promise<void> {
+  async chmod(path: string, _mode: number): Promise<void> {
+    this.assertWritable(`chmod '${path}'`);
     // No POSIX permissions model. Silently no-op so scripts that call
-    // chmod (e.g. `chmod +x`) don't fail.
+    // chmod (e.g. `chmod +x`) don't fail in writable mode.
     return;
   }
 
-  async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
-    // The handle API doesn't expose a way to update mtime/atime. No-op.
+  async utimes(path: string, _atime: Date, _mtime: Date): Promise<void> {
+    this.assertWritable(`utimes '${path}'`);
+    // The handle API doesn't expose a way to update mtime/atime. No-op in
+    // writable mode.
     return;
   }
 

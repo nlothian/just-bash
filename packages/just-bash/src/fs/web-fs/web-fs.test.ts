@@ -239,16 +239,71 @@ describe("WebFs", () => {
       await expect(fs.readlink("/f.txt")).rejects.toThrow("EINVAL");
     });
 
-    it("chmod is a no-op", async () => {
+    it("chmod is a no-op in writable mode", async () => {
       await fs.writeFile("/f.txt", "x");
       await expect(fs.chmod("/f.txt", 0o755)).resolves.toBeUndefined();
     });
 
-    it("utimes is a no-op", async () => {
+    it("utimes is a no-op in writable mode", async () => {
       await fs.writeFile("/f.txt", "x");
       await expect(
         fs.utimes("/f.txt", new Date(), new Date()),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("readOnly mode", () => {
+    let root: FileSystemDirectoryHandle;
+    let ro: WebFs;
+
+    beforeEach(async () => {
+      // Seed via a writable instance, then mount the same root read-only.
+      root = createMockWebFsRoot();
+      const seeder = new WebFs({ root });
+      await seeder.writeFile("/seed.txt", "hello");
+      await seeder.mkdir("/dir");
+      ro = new WebFs({ root, readOnly: true });
+    });
+
+    it("allows reads", async () => {
+      expect(await ro.readFile("/seed.txt")).toBe("hello");
+      expect(await ro.readdir("/")).toEqual(["dir", "seed.txt"]);
+      expect(await ro.exists("/seed.txt")).toBe(true);
+      expect((await ro.stat("/seed.txt")).isFile).toBe(true);
+    });
+
+    it("rejects writeFile with EROFS", async () => {
+      await expect(ro.writeFile("/new.txt", "x")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects appendFile with EROFS", async () => {
+      await expect(ro.appendFile("/seed.txt", "x")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects mkdir with EROFS", async () => {
+      await expect(ro.mkdir("/new-dir")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects rm with EROFS", async () => {
+      await expect(ro.rm("/seed.txt")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects cp with EROFS", async () => {
+      await expect(ro.cp("/seed.txt", "/copy.txt")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects mv with EROFS", async () => {
+      await expect(ro.mv("/seed.txt", "/moved.txt")).rejects.toThrow("EROFS");
+    });
+
+    it("rejects chmod with EROFS", async () => {
+      await expect(ro.chmod("/seed.txt", 0o755)).rejects.toThrow("EROFS");
+    });
+
+    it("rejects utimes with EROFS", async () => {
+      await expect(
+        ro.utimes("/seed.txt", new Date(), new Date()),
+      ).rejects.toThrow("EROFS");
     });
   });
 
