@@ -739,4 +739,39 @@ describe("grep", () => {
       expect(result.stdout).toBe("!@#\n");
     });
   });
+
+  describe("end-of-options sentinel (--)", () => {
+    it("treats `--` as end-of-options, then positional args follow", async () => {
+      const env = new Bash({
+        files: { "/test.txt": "hello zero world\n" },
+      });
+      const result = await env.exec("grep -n -- 'zero.*' /test.txt");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("1:hello zero world\n");
+    });
+
+    it("allows a pattern that starts with a dash after `--`", async () => {
+      const env = new Bash({
+        files: { "/test.txt": "no dash\n-dashstart line\n" },
+      });
+      const result = await env.exec("grep -- '-dashstart' /test.txt");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("-dashstart line\n");
+    });
+
+    it("recursive search with `--` works against the FS", async () => {
+      const env = new Bash({
+        files: {
+          "/dir/a.txt": "alpha zero\n",
+          "/dir/b.txt": "no match here\n",
+        },
+      });
+      const result = await env.exec("grep -r -n -- 'zero' /dir");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("/dir/a.txt:1:alpha zero\n");
+    });
+  });
 });

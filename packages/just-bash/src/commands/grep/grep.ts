@@ -79,6 +79,16 @@ export const grepCommand: Command = {
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
 
+      // POSIX end-of-options: subsequent args are positional, not flags.
+      // Useful when the pattern legitimately starts with `-`.
+      if (arg === "--") {
+        for (i++; i < args.length; i++) {
+          if (pattern === null) pattern = args[i];
+          else files.push(args[i]);
+        }
+        break;
+      }
+
       if (arg.startsWith("-") && arg !== "-") {
         if (arg === "-e" && i + 1 < args.length) {
           pattern = args[++i];
