@@ -639,11 +639,16 @@ export class WebOverlayFs implements IFileSystem {
     return Array.from(paths);
   }
 
-  async chmod(_path: string, _mode: number): Promise<void> {
+  async chmod(path: string, _mode: number): Promise<void> {
+    this.assertWritable(`chmod '${path}'`);
+    // No POSIX permissions model; silent no-op in writable mode.
     return;
   }
 
-  async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
+  async utimes(path: string, _atime: Date, _mtime: Date): Promise<void> {
+    this.assertWritable(`utimes '${path}'`);
+    // No way to update mtime/atime through the handle API; silent no-op
+    // in writable mode.
     return;
   }
 

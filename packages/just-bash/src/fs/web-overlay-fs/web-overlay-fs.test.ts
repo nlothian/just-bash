@@ -188,6 +188,12 @@ describe("WebOverlayFs", () => {
       await expect(fs.appendFile("/a", "x")).rejects.toThrow("EROFS");
       await expect(fs.mkdir("/d")).rejects.toThrow("EROFS");
       await expect(fs.rm("/x")).rejects.toThrow("EROFS");
+      await expect(fs.cp("/x", "/y")).rejects.toThrow("EROFS");
+      await expect(fs.mv("/x", "/y")).rejects.toThrow("EROFS");
+      await expect(fs.chmod("/x", 0o755)).rejects.toThrow("EROFS");
+      await expect(
+        fs.utimes("/x", new Date(), new Date()),
+      ).rejects.toThrow("EROFS");
       // Reads still work
       expect(await fs.readFile("/x")).toBe("y");
     });
@@ -248,11 +254,11 @@ describe("WebOverlayFs", () => {
     it("readlink throws EINVAL", async () => {
       await expect(fs.readlink("/a")).rejects.toThrow("EINVAL");
     });
-    it("chmod is a no-op", async () => {
+    it("chmod is a no-op in writable mode", async () => {
       await fs.writeFile("/x", "y");
       await expect(fs.chmod("/x", 0o644)).resolves.toBeUndefined();
     });
-    it("utimes is a no-op", async () => {
+    it("utimes is a no-op in writable mode", async () => {
       await fs.writeFile("/x", "y");
       await expect(
         fs.utimes("/x", new Date(), new Date()),
