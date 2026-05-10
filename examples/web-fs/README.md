@@ -71,7 +71,7 @@ Then the rest of the buttons enable:
 | **Read top-level files** | Lists every entry, reads the first 240 chars of each file, skips binaries. |
 | **Count (recursive)** | Walks the whole tree and reports file count, dir count, and total bytes — entirely through the `WebFs` async API. |
 | **Write example.txt** | Writes `just-bash-example.txt` into the picked directory. Open the folder in your file manager to confirm — it's a real file on disk. |
-| **grep -rIn** | Runs `grep -r -n -I -- <pattern> /` through the actual bash interpreter (`Bash.exec`). Pattern is shell-quoted so `$`, `` ` ``, and `\` in the input are safe. Output capped at 200 lines. |
+| **grep -rn** | Runs `grep -r -n --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist -- <pattern> /` through the actual bash interpreter (`Bash.exec`). Pattern is shell-quoted so `$`, `` ` ``, and `\` in the input are safe. just-bash's grep has no `-I` (skip binary), so the `--exclude-dir` flags do most of the noise filtering. Output capped at 200 lines. |
 
 ## Why this is interesting
 

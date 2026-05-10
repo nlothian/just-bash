@@ -88,7 +88,7 @@
       </div>
       <div class="actions">
         <input id="grep-pattern" type="text" placeholder="grep pattern (regex)" disabled>
-        <button id="grep" disabled>grep -rIn</button>
+        <button id="grep" disabled>grep -rn</button>
       </div>
       <pre id="picker-out">(pick a directory to begin)</pre>
     </section>
@@ -285,9 +285,15 @@
       if (!pat) { setOut(pickerOut, "(enter a pattern)", "muted"); return; }
       try {
         setOut(pickerOut, "searching…", "muted");
-        // -r: recursive  -n: line numbers  -I: skip binary  --  end of opts
-        // | head -200    cap output so a giant repo doesn't flood the page
-        const cmd = `grep -r -n -I -- ${shq(pat)} / | head -200`;
+        // -r: recursive  -n: line numbers   --  end of opts
+        // --exclude-dir skips the usual noise so the demo stays responsive on
+        // real project directories. just-bash's grep has no -I (skip binary)
+        // — it just matches inside binary content like GNU grep with --text.
+        // | head -200 caps output.
+        const cmd =
+          `grep -r -n` +
+          ` --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist` +
+          ` -- ${shq(pat)} / | head -200`;
         const r = await userBash.exec(cmd);
         const out = r.stdout || (r.exitCode === 1 ? "(no matches)" : "");
         const tail = r.stderr ? `\n--- stderr ---\n${r.stderr}` : "";
