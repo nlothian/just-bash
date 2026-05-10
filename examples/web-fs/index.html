@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>just-bash · WebFs demo</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: .25rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 800px) { .panels { grid-template-columns: 1fr; } }
+    .panel { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; }
+    .panel h2 { margin-top: 0; font-size: 1.1rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; align-items: center; }
+    button { padding: .4rem .8rem; cursor: pointer; font: inherit; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input[type=text] { padding: .4rem; font: inherit; min-width: 12em; }
+    pre { background: rgba(127,127,127,.12); padding: .75rem; border-radius: 4px; max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+    .ok  { color: #0a7d3e; }
+    .err { color: #c00; }
+    .muted { color: #888; }
+    .pickedDir { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>just-bash · WebFs demo</h1>
+  <p class="subtitle">
+    Persistent in-browser bash backed by the
+    <a href="https://developer.mozilla.org/docs/Web/API/File_System_API">File System Access API</a>.
+    The same <code>WebFs</code> class drives both panels — only the source of the
+    <code>FileSystemDirectoryHandle</code> differs.
+  </p>
+
+  <div class="panels">
+    <!-- ============================================================ -->
+    <!-- OPFS panel -->
+    <!-- ============================================================ -->
+    <section class="panel">
+      <h2>OPFS (origin-private)</h2>
+      <p class="muted">
+        Hidden, sandboxed storage. No user prompt. Persists across reloads.
+      </p>
+      <div class="actions">
+        <button id="opfs-write">Write &amp; append</button>
+        <button id="opfs-read">List &amp; read</button>
+        <button id="opfs-readonly">Stat (read-only mode)</button>
+        <button id="opfs-clear">Clear</button>
+      </div>
+      <pre id="opfs-out">(no output yet — try "Write &amp; append", then reload the page and click "List &amp; read")</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- User-picked directory panel -->
+    <!-- ============================================================ -->
+    <section class="panel">
+      <h2>User-picked directory</h2>
+      <p class="muted">
+        <code>showDirectoryPicker()</code>. Chromium-only. Permission lasts the
+        session. Writes go to the real folder on disk.
+      </p>
+      <div class="actions">
+        <button id="pick">Pick a directory…</button>
+        <span id="picked-name" class="pickedDir muted">(none)</span>
+      </div>
+      <div class="actions">
+        <button id="read-all" disabled>Read top-level files</button>
+        <button id="count"    disabled>Count (recursive)</button>
+        <button id="write"    disabled>Write example.txt</button>
+      </div>
+      <div class="actions">
+        <input id="grep-pattern" type="text" placeholder="grep pattern (regex)" disabled>
+        <button id="grep" disabled>grep -rIn</button>
+      </div>
+      <pre id="picker-out">(pick a directory to begin)</pre>
+    </section>
+  </div>
+
+  <script type="module">
+    // The browser bundle. Served from the repo root by `npx serve` — see README.
+    import { Bash, WebFs } from "/packages/just-bash/dist/bundle/browser.js";
+
+    // -----------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const setOut = (el, msg, cls) => {
+      el.textContent = "";
+      const span = document.createElement("span");
+      if (cls) span.className = cls;
+      span.textContent = msg;
+      el.appendChild(span);
+    };
+
+    /** POSIX-safe single-quote shell quoting — defends against $/`/\ in user input. */
+    const shq = (s) => "'" + s.replace(/'/g, "'\\''") + "'";
+
+    // =================================================================
+    // OPFS panel
+    // =================================================================
+    const opfsOut = $("opfs-out");
+    let opfsRootHandle = null;
+    const getOpfsRoot = async () =>
+      (opfsRootHandle ??= await navigator.storage.getDirectory());
+
+    $("opfs-write").onclick = async () => {
+      try {
+        const fs = new WebFs({ root: await getOpfsRoot() });
+        const ts = new Date().toISOString();
+        await fs.writeFile("/notes.txt", `wrote at ${ts}\n`);
+        await fs.appendFile("/notes.txt", "appended line\n");
+        await fs.mkdir("/sub", { recursive: true });
+        await fs.writeFile("/sub/inner.txt", "nested file");
+        setOut(opfsOut,
+          `wrote /notes.txt and /sub/inner.txt at ${ts}\n` +
+          `Reload the page and click "List & read" — content persists.`,
+          "ok");
+      } catch (e) { setOut(opfsOut, `error: ${e.message}`, "err"); }
+    };
+
+    $("opfs-read").onclick = async () => {
+      try {
+        const fs = new WebFs({ root: await getOpfsRoot() });
+        const lines = [];
+        const walk = async (dir) => {
+          const entries = await fs.readdirWithFileTypes(dir);
+          for (const e of entries) {
+            const path = dir === "/" ? "/" + e.name : dir + "/" + e.name;
+            if (e.isDirectory) {
+              lines.push(`[dir]  ${path}/`);
+              await walk(path);
+            } else {
+              const stat = await fs.stat(path);
+              const content = await fs.readFile(path);
+              lines.push(`[file] ${path}  (${stat.size}b, mode ${stat.mode.toString(8)})`);
+              lines.push("       " + content.split("\n").join("\n       "));
+            }
+          }
+        };
+        await walk("/");
+        setOut(opfsOut, lines.length ? lines.join("\n") : "OPFS is empty.");
+      } catch (e) { setOut(opfsOut, `error: ${e.message}`, "err"); }
+    };
+
+    $("opfs-readonly").onclick = async () => {
+      try {
+        const ro = new WebFs({ root: await getOpfsRoot(), readOnly: true });
+        const entries = await ro.readdir("/");
+        if (entries.length === 0) {
+          setOut(opfsOut, "OPFS is empty — write something first.", "muted");
+          return;
+        }
+        const lines = ["readOnly: true → mode bits should be 0o444/0o555\n"];
+        for (const name of entries) {
+          const stat = await ro.stat("/" + name);
+          lines.push(`  ${name}  mode=${stat.mode.toString(8)}  ${stat.isDirectory ? "(dir)" : "(file)"}`);
+        }
+        // Prove writes fail
+        let writeErr = "";
+        try {
+          await ro.writeFile("/should-fail.txt", "x");
+        } catch (e) { writeErr = e.message; }
+        lines.push(`\nwriteFile attempt: ${writeErr || "(unexpectedly succeeded!)"}`);
+        setOut(opfsOut, lines.join("\n"));
+      } catch (e) { setOut(opfsOut, `error: ${e.message}`, "err"); }
+    };
+
+    $("opfs-clear").onclick = async () => {
+      try {
+        const fs = new WebFs({ root: await getOpfsRoot() });
+        const entries = await fs.readdir("/");
+        for (const name of entries) await fs.rm("/" + name, { recursive: true });
+        setOut(opfsOut, `cleared ${entries.length} top-level entries`, "ok");
+      } catch (e) { setOut(opfsOut, `error: ${e.message}`, "err"); }
+    };
+
+    // =================================================================
+    // User-picked directory panel
+    // =================================================================
+    const pickerOut = $("picker-out");
+    let userFs = null;
+    let userBash = null;
+
+    $("pick").onclick = async () => {
+      // showDirectoryPicker requires a user gesture, hence the click handler.
+      try {
+        if (!window.showDirectoryPicker) {
+          throw new Error("showDirectoryPicker is not available in this browser (Chromium-only).");
+        }
+        const root = await window.showDirectoryPicker({ mode: "readwrite" });
+        userFs = new WebFs({ root });
+        // cwd: "/" so bash commands like `grep -r .` see the picked dir as root.
+        userBash = new Bash({ fs: userFs, cwd: "/" });
+        for (const id of ["read-all", "count", "write", "grep", "grep-pattern"]) {
+          $(id).disabled = false;
+        }
+        $("picked-name").textContent = root.name;
+        $("picked-name").classList.remove("muted");
+        setOut(pickerOut, `picked: ${root.name}\nReady. Try the buttons.`, "ok");
+      } catch (e) {
+        if (e.name === "AbortError") setOut(pickerOut, "(picker cancelled)", "muted");
+        else setOut(pickerOut, `error: ${e.message}`, "err");
+      }
+    };
+
+    // ---- Read top-level files ----
+    $("read-all").onclick = async () => {
+      try {
+        const entries = await userFs.readdirWithFileTypes("/");
+        const lines = [`top-level entries in "${$("picked-name").textContent}": ${entries.length}\n`];
+        for (const e of entries) {
+          if (e.isDirectory) {
+            lines.push(`[dir]  ${e.name}/`);
+            continue;
+          }
+          const stat = await userFs.stat("/" + e.name);
+          try {
+            const content = await userFs.readFile("/" + e.name);
+            const preview = content.length > 240 ? content.slice(0, 240) + "…" : content;
+            lines.push(`[file] ${e.name}  (${stat.size}b)\n       ${preview.split("\n").join("\n       ")}`);
+          } catch {
+            lines.push(`[file] ${e.name}  (${stat.size}b — binary or unreadable, skipped)`);
+          }
+        }
+        setOut(pickerOut, lines.join("\n"));
+      } catch (e) { setOut(pickerOut, `error: ${e.message}`, "err"); }
+    };
+
+    // ---- Recursive count via direct API ----
+    async function countRecursive(fs, dir) {
+      let files = 0, dirs = 0, bytes = 0;
+      const entries = await fs.readdirWithFileTypes(dir);
+      for (const e of entries) {
+        const child = dir === "/" ? "/" + e.name : dir + "/" + e.name;
+        if (e.isDirectory) {
+          dirs += 1;
+          const sub = await countRecursive(fs, child);
+          files += sub.files;
+          dirs  += sub.dirs;
+          bytes += sub.bytes;
+        } else {
+          files += 1;
+          try { bytes += (await fs.stat(child)).size; } catch {}
+        }
+      }
+      return { files, dirs, bytes };
+    }
+
+    $("count").onclick = async () => {
+      try {
+        setOut(pickerOut, "counting…", "muted");
+        const t = performance.now();
+        const { files, dirs, bytes } = await countRecursive(userFs, "/");
+        const ms = Math.round(performance.now() - t);
+        const human = bytes > 1e6 ? `${(bytes / 1e6).toFixed(1)} MB`
+                    : bytes > 1e3 ? `${(bytes / 1e3).toFixed(1)} KB`
+                    : `${bytes} B`;
+        setOut(pickerOut,
+          `${files} file${files === 1 ? "" : "s"}, ${dirs} dir${dirs === 1 ? "" : "s"}, ${human}  (${ms}ms)`,
+          "ok");
+      } catch (e) { setOut(pickerOut, `error: ${e.message}`, "err"); }
+    };
+
+    // ---- grep via the bash interpreter (exercises the FS through commands) ----
+    $("grep").onclick = async () => {
+      const pat = $("grep-pattern").value;
+      if (!pat) { setOut(pickerOut, "(enter a pattern)", "muted"); return; }
+      try {
+        setOut(pickerOut, "searching…", "muted");
+        // -r: recursive  -n: line numbers  -I: skip binary  --  end of opts
+        // | head -200    cap output so a giant repo doesn't flood the page
+        const cmd = `grep -r -n -I -- ${shq(pat)} / | head -200`;
+        const r = await userBash.exec(cmd);
+        const out = r.stdout || (r.exitCode === 1 ? "(no matches)" : "");
+        const tail = r.stderr ? `\n--- stderr ---\n${r.stderr}` : "";
+        setOut(pickerOut, `$ ${cmd}\n\n${out}${tail}`);
+      } catch (e) { setOut(pickerOut, `error: ${e.message}`, "err"); }
+    };
+
+    // ---- Write a new file into the picked directory ----
+    $("write").onclick = async () => {
+      try {
+        const ts = new Date().toISOString();
+        const path = "/just-bash-example.txt";
+        await userFs.writeFile(path,
+          `Hello from just-bash WebFs!\n` +
+          `Written at: ${ts}\n` +
+          `\n` +
+          `This file lives in the directory you picked. Open it in your\n` +
+          `regular file manager to confirm — it's a real file on disk.\n`);
+        const stat = await userFs.stat(path);
+        setOut(pickerOut,
+          `wrote ${path}  (${stat.size}b, mode ${stat.mode.toString(8)})\n` +
+          `Open the directory in your file manager to confirm.`,
+          "ok");
+      } catch (e) { setOut(pickerOut, `error: ${e.message}`, "err"); }
+    };
+  </script>
+</body>
+</html>
